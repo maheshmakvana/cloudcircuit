@@ -1,6 +1,7 @@
 import pytest
 
 from cloudcircuit.safeguards import (
+    check_anomaly_robust,
     check_anomaly_spike,
     check_budget,
     check_burn_rate,
@@ -58,6 +59,81 @@ def test_anomaly_invalid_inputs() -> None:
         check_anomaly_spike([1.0, 2.0], spike_multiplier=1.0)
     with pytest.raises(ValueError):
         check_anomaly_spike([1.0, -1.0], spike_multiplier=2.0)
+
+
+def test_anomaly_robust_mad_detects_spike_with_zero_mad() -> None:
+    result = check_anomaly_robust([10.0, 10.0, 10.0, 25.0], method="mad", z_threshold=3.5)
+    assert result.baseline_mean == 10.0
+    assert result.threshold == 10.0
+    assert result.is_spike is True
+
+
+def test_anomaly_robust_mad_not_spike_on_stable_series() -> None:
+    result = check_anomaly_robust([10.0, 10.0, 10.0, 10.0], method="mad")
+    assert result.baseline_mean == 10.0
+    assert result.threshold == 10.0
+    assert result.is_spike is False
+
+
+def test_anomaly_robust_mad_detects_spike_with_nonzero_mad() -> None:
+    result = check_anomaly_robust([10.0, 10.0, 11.0, 10.0, 12.0, 11.0, 50.0], method="mad")
+    assert result.baseline_mean == 10.5
+    assert 0.0 < result.threshold < 50.0
+    assert result.is_spike is True
+
+
+def test_anomaly_robust_percentile_detects_spike() -> None:
+    result = check_anomaly_robust(
+        [10.0, 10.0, 10.0, 10.0, 50.0],
+        method="percentile",
+        percentile=0.95,
+    )
+    assert result.baseline_mean == 10.0
+    assert result.threshold == 10.0
+    assert result.is_spike is True
+
+
+def test_anomaly_robust_percentile_not_spike() -> None:
+    result = check_anomaly_robust(
+        [10.0, 12.0, 11.0, 13.0, 12.8],
+        method="percentile",
+        percentile=0.95,
+    )
+    assert result.is_spike is False
+
+
+def test_anomaly_robust_invalid_inputs() -> None:
+    with pytest.raises(ValueError):
+        check_anomaly_robust([1.0], method="mad")
+    with pytest.raises(ValueError):
+        check_anomaly_robust([1.0, -1.0], method="mad")
+    with pytest.raises(ValueError):
+        check_anomaly_robust([1.0, 2.0], method="unknown")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError):
+        check_anomaly_robust([1.0, 2.0], method="mad", z_threshold=0.0)
+    with pytest.raises(ValueError):
+        check_anomaly_robust([1.0, 2.0], method="mad", min_mad=-0.1)
+    with pytest.raises(ValueError):
+        check_anomaly_robust([1.0, 2.0], method="mad", min_baseline=-0.1)
+
+    with pytest.raises(ValueError):
+        check_anomaly_robust([1.0, 2.0], method="percentile", percentile=1.0)
+
+
+def test_anomaly_robust_min_baseline_floor() -> None:
+    mad = check_anomaly_robust([0.0, 0.0, 0.0, 0.4], method="mad", min_baseline=0.5)
+    assert mad.threshold == 0.5
+    assert mad.is_spike is False
+
+    pct = check_anomaly_robust(
+        [0.0, 0.0, 0.0, 0.4],
+        method="percentile",
+        percentile=0.95,
+        min_baseline=0.5,
+    )
+    assert pct.threshold == 0.5
+    assert pct.is_spike is False
 
 
 def test_circuit_breaker_allows_operation_below_threshold() -> None:

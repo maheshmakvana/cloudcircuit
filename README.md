@@ -43,6 +43,7 @@ python -m pip install cloudcircuit
 
 ```python
 from cloudcircuit import (
+    check_anomaly_robust,
     check_anomaly_spike,
     check_budget,
     check_burn_rate,
@@ -54,6 +55,7 @@ from cloudcircuit import (
 
 budget = check_budget(current_spend=920.0, budget_limit=1000.0, warning_ratio=0.9)
 anomaly = check_anomaly_spike([120.0, 118.0, 121.0, 250.0], spike_multiplier=1.6)
+robust_anomaly = check_anomaly_robust([120.0, 118.0, 121.0, 250.0], method="mad", z_threshold=3.5)
 burn = check_burn_rate([120.0, 118.0, 121.0, 250.0], hot_multiplier=1.4)
 breaker = evaluate_circuit_breaker(consecutive_failures=0, failure_threshold=3)
 forecast = forecast_budget_breach(
@@ -69,7 +71,23 @@ alert = make_alert_payload(policy, service="billing-worker", environment="prod")
 print(policy.action, policy.severity)
 print(forecast.projected_total_spend, forecast.will_breach)
 print(burn.burn_rate_ratio, burn.is_hot)
+print(robust_anomaly.threshold, robust_anomaly.is_spike)
 print(alert)
+```
+
+## Robust anomaly detection (MAD / percentile)
+
+Mean-based thresholds can be brittle when cloud spend is heavy-tailed or bursty. For more robust
+detection, use `check_anomaly_robust`:
+
+```python
+from cloudcircuit import check_anomaly_robust
+
+mad = check_anomaly_robust([120.0, 118.0, 121.0, 250.0], method="mad", z_threshold=3.5)
+p95 = check_anomaly_robust([120.0, 118.0, 121.0, 250.0], method="percentile", percentile=0.95)
+
+print(mad.threshold, mad.is_spike)
+print(p95.threshold, p95.is_spike)
 ```
 
 ## Common developer problems solved
@@ -92,6 +110,7 @@ print(alert)
 
 - `check_budget(...) -> BudgetCheckResult`
 - `check_anomaly_spike(...) -> AnomalyCheckResult`
+- `check_anomaly_robust(...) -> AnomalyCheckResult`
 - `check_burn_rate(...) -> BurnRateResult`
 - `forecast_budget_breach(...) -> ForecastResult`
 - `evaluate_circuit_breaker(...) -> CircuitBreakerDecision`

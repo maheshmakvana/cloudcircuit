@@ -7,6 +7,7 @@ from cloudcircuit.safeguards import (
     CircuitBreakerDecision,
     ForecastResult,
     PolicyDecision,
+    check_anomaly_robust,
     check_anomaly_spike,
     check_budget,
     check_burn_rate,
@@ -16,7 +17,7 @@ from cloudcircuit.safeguards import (
     make_alert_payload,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "__version__",
     "AnomalyCheckResult",
@@ -25,6 +26,7 @@ __all__ = [
     "CircuitBreakerDecision",
     "ForecastResult",
     "PolicyDecision",
+    "check_anomaly_robust",
     "check_anomaly_spike",
     "check_budget",
     "check_burn_rate",

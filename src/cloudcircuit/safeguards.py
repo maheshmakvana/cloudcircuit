@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from math import ceil, floor
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +121,91 @@ def check_anomaly_spike(
         latest_spend=latest_spend,
         baseline_mean=baseline_mean,
         threshold=threshold,
+        is_spike=is_spike,
+    )
+
+
+def _median(values: Sequence[float]) -> float:
+    if not values:
+        raise ValueError("values must be non-empty")
+    sorted_values = sorted(float(value) for value in values)
+    mid = len(sorted_values) // 2
+    if len(sorted_values) % 2 == 1:
+        return sorted_values[mid]
+    return (sorted_values[mid - 1] + sorted_values[mid]) / 2.0
+
+
+def _quantile(values: Sequence[float], p: float) -> float:
+    if not values:
+        raise ValueError("values must be non-empty")
+    if not (0.0 < p < 1.0):
+        raise ValueError("p must be in (0, 1)")
+    sorted_values = sorted(float(value) for value in values)
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    rank = p * (len(sorted_values) - 1)
+    lo = int(floor(rank))
+    hi = int(ceil(rank))
+    if lo == hi:
+        return sorted_values[lo]
+    weight = rank - lo
+    return sorted_values[lo] + weight * (sorted_values[hi] - sorted_values[lo])
+
+
+def check_anomaly_robust(
+    spend_series: Sequence[float],
+    *,
+    method: Literal["mad", "percentile"] = "mad",
+    z_threshold: float = 3.5,
+    min_mad: float = 0.0,
+    percentile: float = 0.95,
+    min_baseline: float = 0.0,
+) -> AnomalyCheckResult:
+    """
+    Robust spend spike detection using MAD or percentile thresholding.
+
+    - MAD method uses median + z * (MAD / 0.6745) as a robust z-score threshold.
+    - Percentile method uses a historical percentile as the spike threshold.
+
+    Baseline is computed from all values except the latest.
+    """
+    if len(spend_series) < 2:
+        raise ValueError("spend_series must contain at least 2 points")
+    if any(value < 0 for value in spend_series):
+        raise ValueError("spend_series values must be >= 0")
+    if min_baseline < 0:
+        raise ValueError("min_baseline must be >= 0")
+
+    if method == "mad":
+        if z_threshold <= 0:
+            raise ValueError("z_threshold must be > 0")
+        if min_mad < 0:
+            raise ValueError("min_mad must be >= 0")
+    elif method == "percentile":
+        if not (0.0 < percentile < 1.0):
+            raise ValueError("percentile must be in (0, 1)")
+    else:
+        raise ValueError("method must be 'mad' or 'percentile'")
+
+    latest_spend = float(spend_series[-1])
+    history = spend_series[:-1]
+
+    if method == "mad":
+        baseline_location = _median(history)
+        abs_deviations = [abs(float(value) - baseline_location) for value in history]
+        mad = max(_median(abs_deviations), float(min_mad))
+        effective_location = max(baseline_location, float(min_baseline))
+        robust_sigma = mad / 0.6745 if mad > 0 else 0.0
+        threshold = effective_location + (float(z_threshold) * robust_sigma)
+    else:
+        baseline_location = _quantile(history, float(percentile))
+        threshold = max(baseline_location, float(min_baseline))
+
+    is_spike = latest_spend > threshold
+    return AnomalyCheckResult(
+        latest_spend=latest_spend,
+        baseline_mean=float(baseline_location),
+        threshold=float(threshold),
         is_spike=is_spike,
     )
 
