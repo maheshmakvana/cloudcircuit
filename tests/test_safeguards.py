@@ -3,7 +3,11 @@ import pytest
 from cloudcircuit.safeguards import (
     check_anomaly_spike,
     check_budget,
+    check_burn_rate,
     evaluate_circuit_breaker,
+    evaluate_spend_policy,
+    forecast_budget_breach,
+    make_alert_payload,
 )
 
 
@@ -85,3 +89,75 @@ def test_circuit_breaker_invalid_inputs() -> None:
         evaluate_circuit_breaker(consecutive_failures=0, failure_threshold=0)
     with pytest.raises(ValueError):
         evaluate_circuit_breaker(consecutive_failures=0, cooldown_steps_remaining=-1)
+
+
+def test_burn_rate_detects_hot_run() -> None:
+    result = check_burn_rate([10.0, 10.0, 20.0], hot_multiplier=1.5)
+    assert result.average_spend == 10.0
+    assert result.burn_rate_ratio == 2.0
+    assert result.is_hot is True
+
+
+def test_burn_rate_invalid_inputs() -> None:
+    with pytest.raises(ValueError):
+        check_burn_rate([5.0], hot_multiplier=1.5)
+    with pytest.raises(ValueError):
+        check_burn_rate([5.0, -1.0], hot_multiplier=1.5)
+    with pytest.raises(ValueError):
+        check_burn_rate([5.0, 6.0], hot_multiplier=1.0)
+
+
+def test_forecast_budget_breach() -> None:
+    result = forecast_budget_breach(
+        current_spend=500.0,
+        budget_limit=800.0,
+        periods_elapsed=10,
+        total_periods=20,
+    )
+    assert result.projected_total_spend == 1000.0
+    assert result.projected_overrun == 200.0
+    assert result.will_breach is True
+
+
+def test_forecast_invalid_inputs() -> None:
+    with pytest.raises(ValueError):
+        forecast_budget_breach(-1.0, 100.0, 1, 10)
+    with pytest.raises(ValueError):
+        forecast_budget_breach(1.0, 0.0, 1, 10)
+    with pytest.raises(ValueError):
+        forecast_budget_breach(1.0, 100.0, 0, 10)
+    with pytest.raises(ValueError):
+        forecast_budget_breach(1.0, 100.0, 11, 10)
+
+
+def test_evaluate_policy_block_throttle_allow() -> None:
+    budget_ok = check_budget(10.0, 100.0, 0.8)
+    budget_warn = check_budget(85.0, 100.0, 0.8)
+    anomaly_ok = check_anomaly_spike([10.0, 10.0, 10.0, 11.0], 1.5)
+    anomaly_spike = check_anomaly_spike([10.0, 10.0, 10.0, 20.0], 1.5)
+    breaker_closed = evaluate_circuit_breaker(0, 3, 0)
+    breaker_open = evaluate_circuit_breaker(3, 3, 0)
+
+    allow = evaluate_spend_policy(budget_ok, anomaly_ok, breaker_closed)
+    throttle = evaluate_spend_policy(budget_warn, anomaly_ok, breaker_closed)
+    block = evaluate_spend_policy(budget_ok, anomaly_spike, breaker_open)
+
+    assert allow.action == "allow"
+    assert throttle.action == "throttle"
+    assert block.action == "block"
+
+
+def test_make_alert_payload() -> None:
+    budget = check_budget(95.0, 100.0, 0.9)
+    anomaly = check_anomaly_spike([20.0, 20.0, 20.0, 35.0], 1.5)
+    breaker = evaluate_circuit_breaker(0, 3, 0)
+    policy = evaluate_spend_policy(budget, anomaly, breaker)
+
+    payload = make_alert_payload(policy, service="billing-worker", environment="prod")
+    assert payload["service"] == "billing-worker"
+    assert payload["environment"] == "prod"
+    assert payload["action"] == "throttle"
+    assert payload["severity"] == "warning"
+
+    with pytest.raises(ValueError):
+        make_alert_payload(policy, service="", environment="prod")
