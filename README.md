@@ -1,3 +1,5 @@
+![cloudcircuit Banner](assets/images/banner.svg)
+
 # cloudcircuit
 
 CloudCircuit is a Python library for **cloud cost control**, **real-time spend anomaly detection**, **budget overrun prevention**, and **circuit-breaker style safety automation**.
